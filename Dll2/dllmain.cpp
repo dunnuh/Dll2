@@ -10,135 +10,6 @@
 #include <vector>
 #pragma comment(lib, "Ws2_32.lib")
 HMODULE hMod = NULL;
-
-
-// DEPENDENCIES FROM MAIN PROJ
-struct ObjectGUID
-{
-	__int64 low;
-	__int64 high;
-
-	ObjectGUID() : low(0), high(0) {}
-	ObjectGUID(int) : ObjectGUID() {}
-}; // this is the guid struct wow uses
-struct ByteHelper
-{
-	static uint8_t GetByteReq(uint64_t value)
-	{
-		uint8_t m = 0;
-		while (value > 0)
-		{
-			value >>= 8;
-			m++;
-		}
-		return m;
-	}
-	static uint8_t GetByteReqFromMask(uint8_t mask)
-	{
-		uint8_t bRq = 0;
-		while (mask > 0)
-		{
-			bRq++;
-			mask >>= 1;
-		}
-		return bRq;
-	}
-	static uint8_t GetMaskFromByteReq(uint8_t byteReq)
-	{
-		uint8_t mask = 1;
-		while (byteReq > 0)
-		{
-			mask <<= 1;
-			byteReq--;
-		}
-		return mask - 1;
-	}
-	static uint8_t GetMask(uint64_t val)
-	{
-		auto byt = reinterpret_cast<uint8_t*>(&val);
-		std::vector<uint8_t> b(byt, byt + sizeof(uint64_t));
-		int l = b.size();
-		auto by = &b[0];
-		uint64_t v(*reinterpret_cast<uint64_t*>(by));
-		return GetMaskFromByteReq(GetByteReq(v));
-	}
-	static std::vector<uint8_t> Pack(uint64_t val)
-	{
-		auto byt = reinterpret_cast<uint8_t*>(&val);
-		std::vector<uint8_t> b(byt, byt + sizeof(uint64_t));
-		std::vector<uint8_t> bt;
-		int it = 0;
-		auto mask = GetMask(val);
-		while (mask > 0)
-		{
-			if (mask & 0b1)
-				bt.push_back(b[it]);
-			mask >>= 1;
-			it++;
-		}
-		return bt;
-	}
-	static uint64_t Unpack(uint8_t mask, uint8_t* b)
-	{
-		std::vector<uint8_t> bt;
-		int it = 0;
-		uint8_t origMask = mask;
-		while (it < sizeof(uint64_t))
-		{
-			if (!(mask & 0b1))
-				bt.push_back(0x0);
-			else
-				bt.push_back(b[it]);
-			mask >>= 1;
-			it++;
-		}
-		return *reinterpret_cast<uint64_t*>(&bt[0]);
-
-	}
-
-
-	static ObjectGUID PackedArrayToObjectGuid(uint8_t* b)
-	{
-		uint8_t maskLow = b[0];
-		uint8_t lRq = GetByteReqFromMask(maskLow);
-		uint8_t maskHigh = b[1];
-		uint8_t hRq = GetByteReqFromMask(maskHigh);
-		uint8_t* Low = &b[2];
-		uint8_t* High = &b[2 + lRq];
-
-
-		ObjectGUID h(0);
-		h.low = Unpack(maskLow, Low);
-		h.high = Unpack(maskHigh, High);
-		return h;
-	}
-
-	static std::vector<uint8_t> ObjectGuidToPackedArray(ObjectGUID g)
-	{
-		uint8_t lowMask = GetMask(g.low);
-		uint8_t lowReq = GetByteReqFromMask(lowMask);
-		uint8_t highMask = GetMask(g.high);
-		uint8_t highReq = GetByteReqFromMask(highMask);
-		auto packLow = Pack(g.low);
-		auto packHigh = Pack(g.high);
-		std::vector<uint8_t> fin;
-
-		fin.push_back(lowMask);
-		fin.push_back(highMask);
-
-		for (int i = 0; i < lowReq; i++)
-		{
-			fin.push_back(packLow[i]);
-		}
-
-		for (int i = 0; i < highReq; i++)
-		{
-			fin.push_back(packHigh[i]);
-		}
-
-		return fin;
-	}
-};
 class ByteBuffer
 {
 private:
@@ -171,11 +42,6 @@ public:
 	{
 		T b = Extract();
 		val = b;
-	}
-
-	void operator<<(ObjectGUID v)
-	{
-		AddObjectGUID(v);
 	}
 
 	void operator<<(uint8_t byte)
@@ -227,15 +93,6 @@ public:
 		va_end(args);
 	}
 
-	void AddObjectGUID(ObjectGUID g)
-	{
-		// adds a packed object guid
-		auto u = ByteHelper::ObjectGuidToPackedArray(g);
-		for (auto b : u)
-		{
-			operator<<(b);
-		}
-	}
 
 	void SetLast(uint8_t byte)
 	{
@@ -268,12 +125,6 @@ public:
 
 		std::reverse(v.begin(), v.end()); // ensure correct byte order so they can be re-inserted and casted properly
 		return *reinterpret_cast<T*>(&v[0]);
-	}
-
-	ObjectGUID GetObjectGUID(int startIndex)
-	{
-		uint8_t* s = &bytes[startIndex];
-		return ByteHelper::PackedArrayToObjectGuid(s);
 	}
 
 	std::vector<uint8_t> ExtractVector(size_t amount)
@@ -314,11 +165,7 @@ public:
 };
 
 #define wow ((DWORD_PTR)(GetModuleHandle(0))) // base address of the wow module in memory
-ObjectGUID GetPlayerGUID()
-{
-	// wowbase + 0x1956EC0 stores the player guid
-	return *reinterpret_cast<ObjectGUID*>(wow + 0x1956EC0);
-}
+
 
 INT(__stdcall* Send)(SOCKET s, const char* buf, int len, int flags) = send; // original WS2 send
 int SendH(SOCKET s, uint8_t* buf, int len, int flags) // the detour
@@ -426,7 +273,7 @@ DWORD WINAPI hMain(LPVOID h)
 	hMod = (HMODULE)h;
 	Attach();
 	std::cout << "console is now accepting input" << std::endl;
-	std::cout << "type 'enable' to enable, type 'quit' to close this window & eject dll" << std::endl;
+	std::cout << "type 'enable' to enable bug, type 'quit' to close this window & eject dll" << std::endl;
 	std::string in = "";
 	while (!conBreak)
 	{
